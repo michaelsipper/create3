@@ -19,3 +19,7 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.toaster-override {
+  --font-sans: var(--font-inter);
+}

@@ -1,82 +1,69 @@
-import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server';
+import vision from '@google-cloud/vision';
+import OpenAI from 'openai';
+import path from 'path';
 
-const OCR_API_KEY = 'YOUR_API_KEY' // Replace with your key from ocr.space
+// Initialize Google Vision Client
+const client = new vision.ImageAnnotatorClient({
+  keyFilename: path.join(process.cwd(), 'google-vision-key.json'),
+});
+
+// Initialize OpenAI with environment variable
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export async function POST(req: Request) {
-  console.log('API endpoint hit')
-  
+  console.log('API endpoint hit');
+
   try {
-    const formData = await req.formData()
-    console.log('FormData received')
-    
-    const file = formData.get('image') as File | null
-    const url = formData.get('url') as string | null
-    
-    console.log('File:', file?.name)
-    console.log('URL:', url)
+    const formData = await req.formData();
+    const file = formData.get('image') as File | null;
 
     if (file) {
-      console.log('Processing image file:', file.name)
-      
-      // Convert File to base64
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      const base64Image = buffer.toString('base64')
+      console.log('Processing file:', file.name);
 
-      // Call OCR.space API
-      const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
-        method: 'POST',
-        headers: {
-          'apikey': OCR_API_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          base64Image: `data:${file.type};base64,${base64Image}`,
-          language: 'eng',
-          detectOrientation: true,
-          scale: true,
-          isTable: false,
-        }),
-      })
+      // Convert the uploaded file to a buffer for processing
+      const buffer = Buffer.from(await file.arrayBuffer());
 
-      const ocrData = await ocrResponse.json()
-      console.log('OCR Response:', ocrData)
+      // Use Google Vision API to detect text in the image
+      const [result] = await client.textDetection(buffer);
+      const detections = result.textAnnotations;
+      const text = detections ? detections[0].description : '';
 
-      const extractedText = ocrData.ParsedResults?.[0]?.ParsedText || ''
-      console.log('Extracted text:', extractedText)
+      console.log('Extracted text from image:', text);
 
-      return NextResponse.json({
-        title: "Extracted Event",
-        datetime: new Date().toISOString(),
-        location: {
-          name: "Extracted Location",
-        },
-        description: extractedText
-      })
+      // Send the extracted text to GPT to parse event details
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a helpful assistant that extracts event details from text descriptions.",
+          },
+          {
+            role: "user",
+            content: `Extract event information from this text. Return a JSON object with the following fields:
+             title, dates (array of all dates), location, description, and type (based of vibe of post issue a type.
+                 some examples (though not limited to are: 'social', 'business', or 'entertainment'). Here is the text:\n\n${text}`,
+          },
+        ],
+        max_tokens: 500,
+      });
+
+      // Parse GPT response
+      const gptContent = response.choices[0]?.message?.content;
+      const eventData = JSON.parse(gptContent || '{}');
+
+      console.log('Parsed event data:', eventData);
+
+      return NextResponse.json(eventData);
     }
 
-    if (url) {
-      // Handle URL processing later
-      return NextResponse.json({
-        title: "Event from URL",
-        datetime: new Date().toISOString(),
-        location: {
-          name: "URL Location",
-        },
-        description: "URL processing to be implemented"
-      })
-    }
+    return NextResponse.json({ error: 'No image provided' }, { status: 400 });
 
-    return NextResponse.json(
-      { error: 'No image or URL provided' },
-      { status: 400 }
-    )
-    
   } catch (error) {
-    console.error('Processing error:', error)
-    return NextResponse.json(
-      { error: 'Failed to process request' },
-      { status: 500 }
-    )
+    console.error('Processing error:', error);
+    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
   }
 }

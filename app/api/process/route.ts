@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import vision from '@google-cloud/vision';
 import OpenAI from 'openai';
+import puppeteer from 'puppeteer';
 import path from 'path';
 
 // Initialize Google Vision Client
@@ -18,8 +19,53 @@ export async function POST(req: Request) {
 
   try {
     const formData = await req.formData();
+    const url = formData.get('url') as string | null;
     const file = formData.get('image') as File | null;
 
+    // Handle URL processing with Puppeteer
+    if (url) {
+      console.log('Processing URL:', url);
+
+      // Launch Puppeteer browser
+      const browser = await puppeteer.launch();
+      const page = await browser.newPage();
+      
+      // Navigate to the URL and wait for it to load
+      await page.goto(url, { waitUntil: 'networkidle2' });
+
+      // Extract full text content of the page
+      const pageText = await page.evaluate(() => document.body.innerText);
+      console.log('Extracted text from page:', pageText);
+
+      // Close the Puppeteer browser
+      await browser.close();
+
+      // Send extracted text to GPT to parse event details
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a helpful assistant that extracts event details from text descriptions.",
+          },
+          {
+            role: "user",
+            content: `Extract event information from this text. Return a JSON object with fields: title, dates (array of all dates), location, description, and type (such as 'social', 'business', or 'entertainment'). Here is the text:\n\n${pageText}`,
+          },
+        ],
+        max_tokens: 500,
+      });
+
+      // Parse GPT response
+      const gptContent = response.choices[0]?.message?.content;
+      const eventData = JSON.parse(gptContent || '{}');
+
+      console.log('Parsed event data from URL:', eventData);
+
+      return NextResponse.json(eventData);
+    }
+
+    // Handle Image processing with Google Vision
     if (file) {
       console.log('Processing file:', file.name);
 
@@ -43,9 +89,7 @@ export async function POST(req: Request) {
           },
           {
             role: "user",
-            content: `Extract event information from this text. Return a JSON object with the following fields:
-             title, dates (array of all dates), location, description, and type (based of vibe of post issue a type.
-                 some examples (though not limited to are: 'social', 'business', or 'entertainment'). Here is the text:\n\n${text}`,
+            content: `Extract event information from this text. Return a JSON object with fields: title, dates (array of all dates), location, description, and type (such as 'social', 'business', or 'entertainment'). Here is the text:\n\n${text}`,
           },
         ],
         max_tokens: 500,
@@ -55,12 +99,13 @@ export async function POST(req: Request) {
       const gptContent = response.choices[0]?.message?.content;
       const eventData = JSON.parse(gptContent || '{}');
 
-      console.log('Parsed event data:', eventData);
+      console.log('Parsed event data from image:', eventData);
 
       return NextResponse.json(eventData);
     }
 
-    return NextResponse.json({ error: 'No image provided' }, { status: 400 });
+    // Return error if no valid input provided
+    return NextResponse.json({ error: 'No image or URL provided' }, { status: 400 });
 
   } catch (error) {
     console.error('Processing error:', error);

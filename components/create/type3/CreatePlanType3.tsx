@@ -38,13 +38,13 @@ interface EditableEventData extends EventData {
 }
 
 const CreatePlanType3 = () => {
-    const { toast } = useToast();  // Add this line near the top with other state declarations
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [error, setError] = useState("");
-    const [preview, setPreview] = useState<string | null>(null);
-    const [eventData, setEventData] = useState<EditableEventData | null>(null);
-  
-    // Rest of your code stays the same...
+  const { toast } = useToast(); // Add this line near the top with other state declarations
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+  const [eventData, setEventData] = useState<EditableEventData | null>(null);
+
+  // Rest of your code stays the same...
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -249,9 +249,13 @@ const CreatePlanType3 = () => {
                     <Input
                       name="datetime"
                       type="datetime-local"
-                      defaultValue={new Date(eventData.datetime)
-                        .toISOString()
-                        .slice(0, 16)}
+                      defaultValue={
+                        eventData.datetime
+                          ? new Date(eventData.datetime)
+                              .toISOString()
+                              .slice(0, 16)
+                          : ""
+                      }
                       required
                       className="mt-1"
                     />

@@ -2,11 +2,28 @@ import { NextResponse } from 'next/server';
 import vision from '@google-cloud/vision';
 import OpenAI from 'openai';
 import puppeteer from 'puppeteer';
-import path from 'path';
 
-// Initialize Google Vision Client
+// Check for required environment variables
+if (!process.env.GOOGLE_CLOUD_PROJECT_ID) {
+  throw new Error('GOOGLE_CLOUD_PROJECT_ID is not defined');
+}
+if (!process.env.GOOGLE_CLOUD_PRIVATE_KEY) {
+  throw new Error('GOOGLE_CLOUD_PRIVATE_KEY is not defined');
+}
+if (!process.env.GOOGLE_CLOUD_CLIENT_EMAIL) {
+  throw new Error('GOOGLE_CLOUD_CLIENT_EMAIL is not defined');
+}
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error('OPENAI_API_KEY is not defined');
+}
+
+// Initialize Google Vision Client using environment variables
 const client = new vision.ImageAnnotatorClient({
-  keyFilename: path.join(process.cwd(), 'google-vision-key.json'),
+  credentials: {
+    project_id: process.env.GOOGLE_CLOUD_PROJECT_ID as string,
+    private_key: (process.env.GOOGLE_CLOUD_PRIVATE_KEY as string).replace(/\\n/g, '\n'),
+    client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL as string,
+  },
 });
 
 // Initialize OpenAI with environment variable
@@ -93,7 +110,7 @@ export async function POST(req: Request) {
     Pay special attention to dates and times:
     - Always look for both date AND time information
     - Today's date is ${new Date().toLocaleDateString()} and the current year is ${currentYear}
-    - If a year isn't specified, assume the event is for the current year
+    - If a year isn't specified, assume the event is for the upcoming occurrence (either this year or next year)
     - For dates without times specified, use contextual clues about the event type:
       * Evening events (parties, shows): default to 7:00 PM
       * Morning events (brunches, races): default to 9:00 AM

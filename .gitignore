@@ -38,3 +38,21 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# API Keys and Environment Variables
+.env
+.env.local
+.env.development
+.env.production
+google-vision-key.json
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Misc
+.DS_Store
+*.pem

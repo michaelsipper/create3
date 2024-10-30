@@ -110,7 +110,8 @@ export async function POST(req: Request) {
     Pay special attention to dates and times:
     - Always look for both date AND time information
     - Today's date is ${new Date().toLocaleDateString()} and the current year is ${currentYear}
-    - If a year isn't specified, assume the event is for the upcoming occurrence (either this year or next year)
+    - If a year isn't specified, ask yourself what year is it at this moment, and use the current year.
+    - If the event includes dates that have already passed, use the next nearest date from today's.
     - For dates without times specified, use contextual clues about the event type:
       * Evening events (parties, shows): default to 7:00 PM
       * Morning events (brunches, races): default to 9:00 AM

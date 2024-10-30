@@ -14,6 +14,71 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Helper function to parse dates and times into ISO format
+function parseDateTimeString(dateTimeString: string): string | null {
+  try {
+    const currentYear = new Date().getFullYear();
+    
+    // Handle short date formats like "10/25" or "10/25/19"
+    const shortDateRegex = /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/;
+    const match = dateTimeString.match(shortDateRegex);
+    
+    if (match) {
+      const [_, month, day, yearPart] = match;
+      let year = yearPart ? parseInt(yearPart) : currentYear;
+      
+      // Convert 2-digit year to full year
+      if (year < 100) {
+        // If the 2-digit year would result in a past date, assume it's for the next occurrence
+        year = year + 2000;
+        const proposedDate = new Date(year, parseInt(month) - 1, parseInt(day));
+        if (proposedDate < new Date()) {
+          year = currentYear;
+        }
+      }
+      
+      // For any date that's already passed this year, assume next year
+      const proposedDate = new Date(year, parseInt(month) - 1, parseInt(day));
+      if (proposedDate < new Date()) {
+        year = currentYear + 1;
+      }
+      
+      // Default time based on event type (will be overridden if time is specified)
+      let defaultHour = 19; // 7 PM default
+      let defaultMinute = 0;
+      
+      // Look for time in the original string
+      const timeMatch = dateTimeString.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+      if (timeMatch) {
+        const [_, hours, minutes, meridiem] = timeMatch;
+        let hour = parseInt(hours);
+        if (meridiem?.toLowerCase() === 'pm' && hour < 12) hour += 12;
+        if (meridiem?.toLowerCase() === 'am' && hour === 12) hour = 0;
+        defaultHour = hour;
+        defaultMinute = parseInt(minutes);
+      }
+      
+      const finalDate = new Date(year, parseInt(month) - 1, parseInt(day), defaultHour, defaultMinute);
+      return finalDate.toISOString();
+    }
+    
+    // If no match, try direct parsing
+    const date = new Date(dateTimeString);
+    if (!isNaN(date.getTime())) {
+      // If the parsed date is in the past, adjust to next year
+      if (date < new Date()) {
+        date.setFullYear(currentYear + 1);
+      }
+      return date.toISOString();
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Date parsing error:', error);
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   console.log('API endpoint hit');
 
@@ -22,90 +87,94 @@ export async function POST(req: Request) {
     const url = formData.get('url') as string | null;
     const file = formData.get('image') as File | null;
 
+    const currentYear = new Date().getFullYear();
+    
+    const systemPrompt = `You are a helpful assistant that extracts event details from text descriptions. 
+    Pay special attention to dates and times:
+    - Always look for both date AND time information
+    - Today's date is ${new Date().toLocaleDateString()} and the current year is ${currentYear}
+    - If a year isn't specified, assume the event is for the current year
+    - For dates without times specified, use contextual clues about the event type:
+      * Evening events (parties, shows): default to 7:00 PM
+      * Morning events (brunches, races): default to 9:00 AM
+      * Business events: default to 10:00 AM
+    - Look for time zone information, defaulting to local time if none is specified
+    - Handle relative dates like "tomorrow", "next Friday", etc.
+    - Recognize various time formats (12-hour, 24-hour, written out)
+    
+    Return a JSON object with these fields:
+    - title: string (the event name)
+    - dates: string[] (array of all mentioned dates with times, in formats like "March 15, ${currentYear} 7:30 PM" or "${currentYear}-03-15 19:30")
+    - location: { name: string, address?: string }
+    - description: string
+    - type: "social" | "business" | "entertainment"
+    `;
+
+    let extractedText = '';
+
     // Handle URL processing with Puppeteer
     if (url) {
       console.log('Processing URL:', url);
-
-      // Launch Puppeteer browser
       const browser = await puppeteer.launch();
       const page = await browser.newPage();
-      
-      // Navigate to the URL and wait for it to load
       await page.goto(url, { waitUntil: 'networkidle2' });
-
-      // Extract full text content of the page
-      const pageText = await page.evaluate(() => document.body.innerText);
-      console.log('Extracted text from page:', pageText);
-
-      // Close the Puppeteer browser
+      extractedText = await page.evaluate(() => document.body.innerText);
       await browser.close();
-
-      // Send extracted text to GPT to parse event details
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "You are a helpful assistant that extracts event details from text descriptions.",
-          },
-          {
-            role: "user",
-            content: `Extract event information from this text. Return a JSON object with fields: title, dates (array of all dates), location, description, and type (such as 'social', 'business', or 'entertainment'). Here is the text:\n\n${pageText}`,
-          },
-        ],
-        max_tokens: 500,
-      });
-
-      // Parse GPT response
-      const gptContent = response.choices[0]?.message?.content;
-      const eventData = JSON.parse(gptContent || '{}');
-
-      console.log('Parsed event data from URL:', eventData);
-
-      return NextResponse.json(eventData);
     }
 
     // Handle Image processing with Google Vision
     if (file) {
       console.log('Processing file:', file.name);
-
-      // Convert the uploaded file to a buffer for processing
       const buffer = Buffer.from(await file.arrayBuffer());
-
-      // Use Google Vision API to detect text in the image
       const [result] = await client.textDetection(buffer);
       const detections = result.textAnnotations;
-      const text = detections ? detections[0].description : '';
-
-      console.log('Extracted text from image:', text);
-
-      // Send the extracted text to GPT to parse event details
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "You are a helpful assistant that extracts event details from text descriptions.",
-          },
-          {
-            role: "user",
-            content: `Extract event information from this text. Return a JSON object with fields: title, dates (array of all dates), location, description, and type (such as 'social', 'business', or 'entertainment'). Here is the text:\n\n${text}`,
-          },
-        ],
-        max_tokens: 500,
-      });
-
-      // Parse GPT response
-      const gptContent = response.choices[0]?.message?.content;
-      const eventData = JSON.parse(gptContent || '{}');
-
-      console.log('Parsed event data from image:', eventData);
-
-      return NextResponse.json(eventData);
+      extractedText = detections ? detections[0].description : '';
     }
 
-    // Return error if no valid input provided
-    return NextResponse.json({ error: 'No image or URL provided' }, { status: 400 });
+    if (!extractedText) {
+      return NextResponse.json({ error: 'No text could be extracted' }, { status: 400 });
+    }
+
+    console.log('Extracted text:', extractedText);
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: `Extract event information from this text:\n\n${extractedText}`,
+        },
+      ],
+      max_tokens: 500,
+    });
+
+    const gptContent = response.choices[0]?.message?.content;
+    const rawEventData = JSON.parse(gptContent || '{}');
+
+    // Process and format the dates
+    const processedEventData = {
+      ...rawEventData,
+      datetime: rawEventData.dates && rawEventData.dates.length > 0 
+        ? parseDateTimeString(rawEventData.dates[0])
+        : null,
+      // Keep the original dates array for reference
+      allDates: rawEventData.dates?.map((date: string) => ({
+        original: date,
+        parsed: parseDateTimeString(date)
+      }))
+    };
+
+    console.log('Processed event data:', processedEventData);
+
+    if (!processedEventData.datetime) {
+      console.warn('Could not parse any valid dates from:', rawEventData.dates);
+    }
+
+    return NextResponse.json(processedEventData);
 
   } catch (error) {
     console.error('Processing error:', error);
